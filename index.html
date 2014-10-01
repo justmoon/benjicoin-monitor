@@ -1,0 +1,97 @@
+<!doctype html>
+<html ng-app="benjiMonitorApp">
+<head>
+<link href="//maxcdn.bootstrapcdn.com/bootswatch/3.2.0/spacelab/bootstrap.min.css" rel="stylesheet">
+<script src="ripple-debug.js"></script>
+<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.0-rc.3/angular.min.js"></script>
+<script>
+
+var HOTWALLET_ACCOUNT = 'rM3a41QP23qcnq224omELJWRi1ZDaFww4v';
+var ISSUING_ACCOUNT = 'racF89dtrUPa2dhHMLhWasWox6U76Jsuia';
+
+var Remote = ripple.Remote;
+
+var remote = new Remote({
+  // see the API Reference for available options
+  servers: [ 'wss://s1.ripple.com:443' ]
+});
+
+
+angular.module('benjiMonitorApp', [])
+  .controller('HistoryController', ['$scope', '$http', function($scope, $http) {
+    remote.connect(function() {
+      // Load most recent Benji hotwallet transactions
+      remote.request_account_tx({
+        account: HOTWALLET_ACCOUNT,
+        ledger_index_min: -1,
+        ledger_index_max: -1,
+        limit: 100
+      }, function (err, result) {
+        if (err) console.error(err && err.stack ? err.stack : err);
+
+        $scope.$apply(function () {
+          // Rewrite the transaction JSON into a more suitable format and
+          // filter out unwanted entries.
+          $scope.transactions = result.transactions.map(function (row) {
+            // Ignore non-payments
+            if (row.tx.TransactionType !== 'Payment') return null;
+
+            // Ignore XRP payments
+            if ("object" !== typeof row.tx.Amount) return;
+
+            // Only consider transactions from the hot wallet
+            if (row.tx.Account !== HOTWALLET_ACCOUNT) return;
+
+            // Ignore payments back to the issuing account
+            if (row.tx.Destination === ISSUING_ACCOUNT) return;
+
+            return {
+              date: new Date(ripple.utils.toTimestamp(row.tx.date)),
+              amount: +row.tx.Amount.value,
+              recipient: row.tx.Destination
+            };
+          }).filter(function (tx) { return !!tx; });
+
+          // We can load the recipient names asynchronously, Angular will
+          // be smart enough to update them in place.
+          $scope.transactions.forEach(function (tx) {
+            $http.get('https://id.ripple.com/v1/user/'+tx.recipient).success(function (result) {
+              tx.recipient = result.username;
+            });
+          });
+        });
+      });
+    });
+  }]);
+</script>
+<style>
+  body {
+    padding-top: 2em;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+<div class="jumbotron">
+  <h1>Benji Rewards</h1>
+  <p>Here is a list of benji rewards and those who have received them.</p>
+</div>
+<table class="table table-hover" ng-controller="HistoryController">
+  <thead>
+    <tr>
+      <th class="col-sm-1">Date</th>
+      <th class="col-sm-1">Amount</th>
+      <th class="col-sm-4">Recipient</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr ng-repeat="transaction in transactions">
+      <td>{{ transaction.date | date:'short' }}</td>
+      <td class="text-success">+{{ transaction.amount }}</td>
+      <td>{{ transaction.recipient }}</td>
+    </tr>
+  </tbody>
+</table>
+  </div>
+</body>
+</html>
