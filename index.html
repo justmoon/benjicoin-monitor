@@ -19,6 +19,34 @@ var remote = new Remote({
 
 angular.module('benjiMonitorApp', [])
   .controller('HistoryController', ['$scope', '$http', function($scope, $http) {
+    function processTransaction(tx, meta) {
+      // Ignore non-payments
+      if (tx.TransactionType !== 'Payment') return null;
+
+      // Ignore XRP payments
+      if ("object" !== typeof tx.Amount) return;
+
+      // Only consider transactions from the hot wallet
+      if (tx.Account !== HOTWALLET_ACCOUNT) return;
+
+      // Ignore payments back to the issuing account
+      if (tx.Destination === ISSUING_ACCOUNT) return;
+
+      var processedTx = {
+        date: new Date(ripple.utils.toTimestamp(tx.date)),
+        amount: +tx.Amount.value,
+        recipient: tx.Destination
+      }
+
+      // We can load the recipient names asynchronously, Angular will
+      // be smart enough to update them in place.
+      $http.get('https://id.ripple.com/v1/user/'+processedTx.recipient).success(function (result) {
+        processedTx.recipient = result.username;
+      });
+
+      $scope.transactions.unshift(processedTx);
+    }
+
     remote.connect(function() {
       // Load most recent Benji hotwallet transactions
       remote.request_account_tx({
@@ -32,33 +60,18 @@ angular.module('benjiMonitorApp', [])
         $scope.$apply(function () {
           // Rewrite the transaction JSON into a more suitable format and
           // filter out unwanted entries.
-          $scope.transactions = result.transactions.map(function (row) {
-            // Ignore non-payments
-            if (row.tx.TransactionType !== 'Payment') return null;
 
-            // Ignore XRP payments
-            if ("object" !== typeof row.tx.Amount) return;
-
-            // Only consider transactions from the hot wallet
-            if (row.tx.Account !== HOTWALLET_ACCOUNT) return;
-
-            // Ignore payments back to the issuing account
-            if (row.tx.Destination === ISSUING_ACCOUNT) return;
-
-            return {
-              date: new Date(ripple.utils.toTimestamp(row.tx.date)),
-              amount: +row.tx.Amount.value,
-              recipient: row.tx.Destination
-            };
-          }).filter(function (tx) { return !!tx; });
-
-          // We can load the recipient names asynchronously, Angular will
-          // be smart enough to update them in place.
-          $scope.transactions.forEach(function (tx) {
-            $http.get('https://id.ripple.com/v1/user/'+tx.recipient).success(function (result) {
-              tx.recipient = result.username;
-            });
+          $scope.transactions = [];
+          result.transactions.forEach(function (row) {
+            processTransaction(row.tx, row.meta);
           });
+        });
+      });
+
+      // Stay up-to-date with new Benjicoin transactions
+      remote.account(HOTWALLET_ACCOUNT).on('transaction', function (e) {
+        $scope.$apply(function () {
+          processTxn(e.transaction, e.meta);
         });
       });
     });
